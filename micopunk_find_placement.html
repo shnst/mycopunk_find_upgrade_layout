@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Hex Board — Multi-solution solver</title>
+<style>
+  :root { --panel-w: 360px; --bg: #fafafa; --ink: #222; --stroke: #7a4a2e; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    color: var(--ink); background: var(--bg);
+    height: 100vh; display: grid; grid-template-rows: auto 1fr;
+  }
+  header {
+    padding: 10px 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    border-bottom: 1px solid #ddd; background: #fff;
+  }
+  button {
+    padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; background: white; cursor: pointer;
+  }
+  button:hover { border-color: #aaa; }
+  main { display: grid; grid-template-columns: 1fr var(--panel-w); min-height: 0; }
+  #boardWrap { position: relative; display: grid; place-items: center; min-width: 0; overflow: hidden; }
+  #board { background: #fff; border: 1px solid #ddd; border-radius: 12px; max-width: 100%; height: auto; }
+  #overlayMessage {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 600; color: #c00; background: rgba(255,255,255,0.7);
+    pointer-events: none;
+  }
+  aside { border-left: 1px solid #ddd; background: #fff; min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+  .sideHeader { padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600; }
+  #shapeList { overflow: auto; padding: 10px; display: grid; gap: 10px; }
+  .shapeItem {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+    padding: 8px; border: 1px solid #eee; border-radius: 10px;
+  }
+  .shapeItem canvas { background: #fff; border: 1px dashed #ddd; border-radius: 8px; }
+  .shapeItem button { padding: 6px 8px; }
+  .hint { opacity: 0.8; font-size: 12px; }
+  .grow { flex: 1 1 auto; }
+  .solControls { display:flex; align-items:center; gap:8px; }
+  .solControls input[type="number"] { width: 72px; padding:6px 8px; border:1px solid #ccc; border-radius:8px; }
+  .pill { padding: 6px 10px; border:1px solid #eee; border-radius: 999px; background:#f7f7f7; }
+</style>
+</head>
+<body>
+  <header>
+    <button id="btnAdd">Add Shape</button>
+    <button id="btnSolve">Find placement</button>
+    <button id="btnClear">Clear</button>
+    <div class="grow"></div>
+    <div class="solControls">
+      <label class="hint">Max solutions</label>
+      <input id="maxSol" type="number" min="1" max="200" value="5" />
+      <button id="btnPrev" disabled>◀</button>
+      <span id="solInfo" class="pill hint">0 / 0</span>
+      <button id="btnNext" disabled>▶</button>
+    </div>
+  </header>
+  <main>
+    <div id="boardWrap">
+      <canvas id="board" width="900" height="560"></canvas>
+      <div id="overlayMessage">No placement available</div>
+    </div>
+    <aside>
+      <div class="sideHeader">Shapes</div>
+      <div id="shapeList"></div>
+    </aside>
+  </main>
+
+<script>
+/* ================================
+ *  Palette (40 colors)
+ * ================================ */
+const COLORS = [
+  "#e6194b","#3cb44b","#0082c8","#f58231","#911eb4","#46f0f0",
+  "#f032e6","#d2f53c","#fabebe","#008080","#e6beff","#aa6e28",
+  "#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080",
+  "#ffe119","#bfef45","#82b1ff","#ffd700","#90ee90","#ff7f50",
+  "#87ceeb","#ff69b4","#cd5c5c","#20b2aa","#b0c4de","#dda0dd",
+  "#7fffd4","#ffe4e1","#6a5acd","#2e8b57","#ff8c00","#8fbc8f",
+  "#1e90ff","#c71585","#00ced1","#f0e68c"
+];
+
+/* ================================
+ *  Small helpers
+ * ================================ */
+const toKey = (x,y) => `${x},${y}`;
+const fromKey = k => k.split(',').map(Number);
+const cmpCoord = (a,b) => a[0] - b[0] || a[1] - b[1];
+const cloneCells = cells => cells.map(([x,y]) => [x,y]);
+function canonicalKey(cells) { const arr = cells.map(([x,y]) => `${x},${y}`); arr.sort(); return arr.join(';'); }
+
+/* ================================
+ *  Odd-q <-> Axial <-> Cube
+ * ================================ */
+function oddq_to_axial([col,row]) {
+  const parity = (col % 2 === 0) ? 0 : 1;
+  const q = col;
+  const r = row - Math.floor((col + parity)/2);
+  return [q, r];
+}
+function axial_to_oddq([q,r]) {
+  const parity = (q % 2 === 0) ? 0 : 1;
+  const col = q;
+  const row = r + Math.floor((q + parity)/2);
+  return [col, row];
+}
+function axial_to_cube([x,y]) { return [x, y, -x - y]; }
+function cube_to_axial(x,y,z) { return [x,y]; }
+function oddq_to_cube(coord) { return axial_to_cube(oddq_to_axial(coord)); }
+function cube_to_oddq(x,y,z) { return axial_to_oddq(cube_to_axial(x,y,z)); }
+function _cube_rotate_steps(x,y,z,steps) {
+  let s = ((steps % 6) + 6) % 6;
+  for (let i=0;i<s;i++) [x,y,z] = [-z, -x, -y];
+  return [x,y,z];
+}
+
+/* ================================
+ *  Shape utilities
+ * ================================ */
+function get_pivot(cells) {
+  return cells.reduce((best, cur) => {
+    if (!best) return cur;
+    if (cur[0] < best[0]) return cur;
+    if (cur[0] === best[0] && cur[1] < best[1]) return cur;
+    return best;
+  }, null);
+}
+function normalize_shape(cells) {
+  if (!cells || !cells.length) return [];
+  let min_x = Infinity, min_y = Infinity;
+  for (const [x,y] of cells) { if (x < min_x) min_x = x; if (y < min_y) min_y = y; }
+  const normalized = [];
+  for (const [x,y] of cells) {
+    let nx = x - min_x;
+    let ny = y - min_y;
+    if (x % 2 === 1 && nx % 2 === 0) ny -= 1;
+    normalized.push([nx, ny]);
+  }
+  const set = new Set(normalized.map(([a,b]) => toKey(a,b)));
+  return Array.from(set, fromKey).sort(cmpCoord);
+}
+function move_shape(cells, dx, dy, max_width, max_height) {
+  if (!cells || !cells.length) return [];
+  const [px,py] = get_pivot(cells);
+  const pivot_parity = px % 2;
+  const moved = [];
+  for (const [x,y] of cells) {
+    const offset_x = x - px;
+    const offset_y = y - py;
+    let new_x = px + dx + offset_x;
+    let new_y = py + dy + offset_y;
+    if (!(x === px && y === py) && (x % 2 !== pivot_parity)) {
+      if (x % 2 === 1 && new_x % 2 === 0) new_y -= 1;
+      else if (x % 2 === 0 && new_x % 2 === 1) new_y += 1;
+    }
+    if (!(0 <= new_x && new_x < max_width && 0 <= new_y && new_y < max_height)) return null;
+    moved.push([new_x, new_y]);
+  }
+  const set = new Set(moved.map(([a,b])=>toKey(a,b)));
+  return Array.from(set, fromKey).sort(cmpCoord);
+}
+function rotate_cells_about_pivot_oddq(cells, times) {
+  if (!cells || !cells.length) return [];
+  let s = ((times % 6) + 6) % 6;
+  if (s === 0) return cloneCells(cells);
+  const pivot = get_pivot(cells);
+  const [pcx,pcy,pcz] = oddq_to_cube(pivot);
+  const out = new Set();
+  for (const [col,row] of cells) {
+    let [cx,cy,cz] = oddq_to_cube([col,row]);
+    cx -= pcx; cy -= pcy; cz -= pcz;
+    [cx,cy,cz] = _cube_rotate_steps(cx,cy,cz,s);
+    cx += pcx; cy += pcy; cz += pcz;
+    const [nx,ny] = cube_to_oddq(cx,cy,cz);
+    out.add(toKey(nx,ny));
+  }
+  return Array.from(out, fromKey).sort(cmpCoord);
+}
+function rotate_shape(cells, times, max_width, max_height) {
+  if (!cells || !cells.length) return [];
+  const rotated = rotate_cells_about_pivot_oddq(cells, times);
+  for (const [x,y] of rotated) if (!(0 <= x && x < max_width && 0 <= y && y < max_height)) return null;
+  return rotated;
+}
+
+/* ================================
+ *  Axial offsets (correct placement math)
+ * ================================ */
+function offsetsFromPivotAxial(cells) {
+  const pivot = get_pivot(cells);
+  const [pq, pr] = oddq_to_axial(pivot);
+  const offs = [];
+  for (const c of cells) {
+    const [q, r] = oddq_to_axial(c);
+    offs.push([q - pq, r - pr]);
+  }
+  offs.sort((a,b) => a[0] - b[0] || a[1] - b[1]);
+  return offs;
+}
+function offsetsKey(offs) { return offs.map(([dq,dr]) => dq + "," + dr).join(";"); }
+
+/* ================================
+ *  Drawing (Canvas) — hex
+ * ================================ */
+function drawHex(ctx, cx, cy, r, fill, stroke, alpha=1) {
+  const strokeColor =
+    getComputedStyle(document.documentElement).getPropertyValue('--stroke').trim() || 'brown';
+  ctx.save();
+  ctx.beginPath();
+  for (let i=0;i<6;i++) {
+    const ang = (Math.PI/180) * (60*i + 60); 
+    const vx = cx + r * Math.cos(ang);
+    const vy = cy + r * Math.sin(ang);
+    if (i===0) ctx.moveTo(vx,vy); else ctx.lineTo(vx,vy);
+  }
+  ctx.closePath();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1; ctx.strokeStyle = stroke || strokeColor; ctx.stroke();
+  ctx.restore();
+}
+
+/* ================================
+ *  HexBoard (0,0 at bottom-left)
+ * ================================ */
+class HexBoard {
+  constructor(width, height, canvas) {
+    this.width = width;
+    this.height = height;
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+
+    this.radius = 40;
+    this.dx = 1.5 * this.radius;
+    this.dy = Math.sqrt(3) * this.radius;
+
+    this.marginX = 100;
+    this.marginY = 100;
+
+    this.cells = [];
+    for (let y=0;y<height;y++) for (let x=0;x<width;x++) this.cells.push([x,y]);
+    this.filled = new Map();     // "x,y" -> color
+    this.hexCenters = new Map(); // "x,y" -> [cx,cy]
+  }
+
+  // bottom-left origin: flip y visually
+  cell_center(x,y) {
+    const yDown = (this.height - 1 - y);
+    const draw_x = this.dx * x + this.marginX;
+    const draw_y = this.dy * yDown - (x % 2 ?  0 : (this.dy / 2)) + this.marginY;
+    return [draw_x, draw_y];
+  }
+
+  draw() {
+    const ctx = this.ctx;
+    ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+    this.hexCenters.clear();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '10px system-ui';
+
+    const textOffset = this.radius * 0.35;
+
+    for (const [x,y] of this.cells) {
+      const [cx,cy] = this.cell_center(x,y);
+      const color = this.filled.get(toKey(x,y)) || "white";
+      const isFilled = this.filled.has(toKey(x,y));
+      drawHex(ctx, cx, cy, this.radius, color, null, isFilled ? 0.3 : 1.0);
+      this.hexCenters.set(toKey(x,y), [cx,cy]);
+    }
+  }
+
+  drawMessage(msg) {
+    const overlay = document.getElementById('overlayMessage');
+    overlay.textContent = msg;
+    overlay.style.display = 'flex';
+  }
+  hideMessage() { document.getElementById('overlayMessage').style.display = 'none'; }
+
+  toggle_cell(mouseX, mouseY) {
+    let chosen = null, bestD2 = Infinity;
+    for (const [k,[cx,cy]] of this.hexCenters.entries()) {
+      const dx = mouseX - cx, dy = mouseY - cy;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < this.radius*this.radius && d2 < bestD2) { bestD2 = d2; chosen = k; }
+    }
+    if (!chosen) return false;
+    if (this.filled.has(chosen)) this.filled.delete(chosen);
+    else this.filled.set(chosen, "black");
+    return true;
+  }
+
+  clear_all() { this.filled.clear(); }
+}
+
+/* ================================
+ *  Shape
+ * ================================ */
+class Shape {
+  constructor(cells, color) {
+    this.cells = cloneCells(cells);
+    this.color = color;
+    this.pivot = get_pivot(this.cells) || [0,0];
+  }
+
+  drawToCanvas(canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const norm = normalize_shape(this.cells);
+
+    const radius = 12;
+    const dx = 1.5 * radius;
+    const dy = Math.sqrt(3) * radius;
+
+    let maxx = 0, maxy = 0;
+    for (const [x,y] of norm) { if (x>maxx) maxx=x; if (y>maxy) maxy=y; }
+
+    const w = dx*maxx + 2*radius, h = dy*maxy + 2*radius;
+    const offx = (canvas.width - w)/2 + radius;
+    const offy = (canvas.height - h)/2 + radius;
+
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '9px system-ui';
+
+    for (const [x,y] of norm) {
+      const yDown = (maxy - y);
+      const cx = offx + dx * x;
+      const cy = offy + dy * yDown - (x % 2 ? 0 : (dy/2));
+      drawHex(ctx, cx, cy, radius, this.color, null, 0.3);
+    }
+  }
+
+  rotations() {
+    const res = [];
+    const seen = new Set();
+    for (let i=0;i<6;i++) {
+      const rot = rotate_cells_about_pivot_oddq(this.cells, i);
+      const key = canonicalKey(rot);
+      if (!seen.has(key)) { seen.add(key); res.push(rot); }
+    }
+    return res;
+  }
+
+  rotate_about_pivot(times) { return rotate_cells_about_pivot_oddq(this.cells, times); }
+}
+
+/* ================================
+ *  Worker factory + chunk util
+ *  (collects multiple solutions per worker)
+ * ================================ */
+function createSolverWorkerURL() {
+  const src = `
+    self.onmessage = (e) => {
+      const { placements_ordered, sizes_ordered, board_cells, seeds, limit } = e.data;
+      const n = placements_ordered.length;
+
+      const remain = new Array(n + 1).fill(0);
+      for (let i = n - 1; i >= 0; i--) remain[i] = remain[i + 1] + sizes_ordered[i];
+
+      function bitCount(x) { let c = 0; while (x) { x &= (x - 1n); c++; } return c; }
+
+      const solutions = [];
+
+      function dfs(depth, occ, chosen) {
+        if (solutions.length >= limit) return false;
+        const free = board_cells - bitCount(occ);
+        if (remain[depth] > free) return false;
+        if (depth === n) { solutions.push(chosen.slice()); return solutions.length < limit; }
+
+        const plist = placements_ordered[depth];
+        for (let i = 0; i < plist.length; i++) {
+          const mask = plist[i];
+          if ((mask & occ) !== 0n) continue;
+          chosen[depth] = mask;
+          if (!dfs(depth + 1, occ | mask, chosen)) return false;
+        }
+        return true;
+      }
+
+      for (let s = 0; s < seeds.length; s++) {
+        if (solutions.length >= limit) break;
+        const seed = seeds[s];
+        const chosen = new Array(n).fill(0n);
+        chosen[0] = seed;
+        dfs(1, seed, chosen);
+      }
+      postMessage({ ok: solutions.length > 0, solutions });
+    };
+  `;
+  return URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+}
+function chunk(arr, k) {
+  const out = [];
+  const size = Math.ceil(arr.length / k);
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* ================================
+ *  App
+ * ================================ */
+class App {
+  constructor() {
+    this.canvas = document.getElementById('board');
+    this.board = new HexBoard(7, 6, this.canvas);
+
+    // UI
+    document.getElementById('btnAdd').addEventListener('click', () => this.add_shape());
+    document.getElementById('btnSolve').addEventListener('click', () => this.find_placement());
+    document.getElementById('btnClear').addEventListener('click', () => this.clear_board());
+    document.getElementById('btnPrev').addEventListener('click', () => this.showPrevSolution());
+    document.getElementById('btnNext').addEventListener('click', () => this.showNextSolution());
+
+    this.canvas.addEventListener('click', (ev) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const x = (ev.clientX - rect.left);
+      const y = (ev.clientY - rect.top);
+      if (this.board.toggle_cell(x,y)) this.redraw();
+    });
+
+    window.addEventListener('keydown', (ev) => this.on_key(ev), { passive: false });
+
+    // State
+    this.shapes = [];
+    this.color_index = 0;
+
+    this.current_shape_coords = [];
+    this.current_shape_color = "black";
+    this.current_base = [0,0];
+
+    // Solutions browsing state
+    this.solutionMasks = []; // array of arrays<BigInt> (each is chosen_masks)
+    this.solutionIndex = 0;
+    this.decodeHelpers = null; // {powIndex, indexToCoord, order}
+    this.updateSolutionControls();
+
+    this.redraw();
+  }
+
+  on_key(event) {
+    const key = event.key.toLowerCase();
+    if (['arrowleft','arrowright','arrowup','arrowdown','r'].includes(key)) event.preventDefault();
+    if (this.board.filled.size === 0) return;
+
+    if (!this.current_shape_coords.length) {
+      this.current_shape_coords = Array.from(this.board.filled.keys(), fromKey);
+      this.current_shape_color = this.board.filled.values().next().value || "black";
+      this.current_base = get_pivot(this.current_shape_coords);
+    }
+
+    let dx = 0, dy = 0;
+    if (key === 'arrowleft') dx = -1;
+    else if (key === 'arrowright') dx = 1;
+    else if (key === 'arrowup') dy = 1;      // bottom-left origin
+    else if (key === 'arrowdown') dy = -1;
+    else if (key === 'r') {
+      const rotated = rotate_shape(this.current_shape_coords, 1, this.board.width, this.board.height);
+      if (rotated) {
+        this.board.filled.clear();
+        for (const c of rotated) this.board.filled.set(toKey(c[0], c[1]), this.current_shape_color);
+        this.current_shape_coords = rotated;
+      }
+      this.redraw();
+      return;
+    }
+
+    if (dx !== 0 || dy !== 0) {
+      const moved = move_shape(this.current_shape_coords, dx, dy, this.board.width, this.board.height);
+      if (moved) {
+        for (const c of this.current_shape_coords) this.board.filled.delete(toKey(c[0], c[1]));
+        this.current_shape_coords = moved;
+        this.current_base = [this.current_base[0] + dx, this.current_base[1] + dy];
+        for (const c of moved) this.board.filled.set(toKey(c[0], c[1]), this.current_shape_color);
+        this.redraw();
+      }
+    }
+  }
+
+  add_shape() {
+    if (this.board.filled.size === 0) return;
+    const color = COLORS[this.color_index % COLORS.length]; this.color_index++;
+    const cells = Array.from(this.board.filled.keys(), fromKey);
+    this.shapes.push(new Shape(cells, color));
+    this.board.clear_all();
+    this.current_shape_coords = [];
+    this.board.hideMessage();
+    this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
+    this.redraw();
+  }
+  remove_shape(index) { if (index >= 0 && index < this.shapes.length) { this.shapes.splice(index, 1); this.redraw(); } }
+  clear_board() {
+    this.board.clear_all();
+    this.current_shape_coords = [];
+    this.board.hideMessage();
+    this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
+    this.redraw();
+  }
+  update_shape_list() {
+    const list = document.getElementById('shapeList');
+    list.innerHTML = '';
+    if (this.shapes.length === 0) return;
+    this.shapes.forEach((shape, i) => {
+      const item = document.createElement('div');
+      item.className = 'shapeItem';
+      const canvas = document.createElement('canvas');
+      canvas.width = 200; canvas.height = 110;
+      shape.drawToCanvas(canvas);
+      const btn = document.createElement('button');
+      btn.textContent = 'Remove';
+      btn.addEventListener('click', () => this.remove_shape(i));
+      item.appendChild(canvas); item.appendChild(btn);
+      list.appendChild(item);
+    });
+  }
+  updateSolutionControls() {
+    const prev = document.getElementById('btnPrev');
+    const next = document.getElementById('btnNext');
+    const info = document.getElementById('solInfo');
+    const total = this.solutionMasks.length;
+    prev.disabled = !(total > 1 && this.solutionIndex > 0);
+    next.disabled = !(total > 1 && this.solutionIndex < total - 1);
+    info.textContent = `${total ? this.solutionIndex + 1 : 0} / ${total}`;
+  }
+  showPrevSolution() { if (this.solutionIndex > 0) { this.solutionIndex--; this.applySolutionByIndex(this.solutionIndex); } }
+  showNextSolution() { if (this.solutionIndex + 1 < this.solutionMasks.length) { this.solutionIndex++; this.applySolutionByIndex(this.solutionIndex); } }
+
+  applySolutionByIndex(idx) {
+    if (!this.decodeHelpers) return;
+    const { powIndex, indexToCoord, order } = this.decodeHelpers;
+    const chosen_masks = this.solutionMasks[idx];
+    const placement_map = new Map();
+    for (let depth = 0; depth < chosen_masks.length; depth++) {
+      const shapeIdx = order[depth];
+      const color = this.shapes[shapeIdx].color;
+      let m = chosen_masks[depth];
+      while (m) {
+        const lsb = m & (-m);
+        const bit = powIndex.get(lsb.toString());
+        const [x,y] = indexToCoord[bit];
+        placement_map.set(`${x},${y}`, color);
+        m ^= lsb;
+      }
+    }
+    this.board.filled = placement_map;
+    this.redraw();
+    this.updateSolutionControls();
+  }
+
+  /* ================================
+   *  Multithreaded multi-solution solver (axial offsets)
+   * ================================ */
+  find_placement() {
+    this.board.hideMessage();
+    this.board.filled.clear();
+    this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
+
+    if (this.shapes.length === 0) { this.redraw(); return; }
+
+    const W = this.board.width, H = this.board.height;
+    const BOARD_CELLS = W * H;
+    const total_cells = this.shapes.reduce((s,sh) => s + sh.cells.length, 0);
+    if (total_cells > BOARD_CELLS) { this.redraw(); this.board.drawMessage('No placement available'); return; }
+
+    const requestedMax = Math.max(1, Math.min(200, Number(document.getElementById('maxSol').value) || 5));
+    const MAX_SOLUTIONS = Math.min(requestedMax, 100); // safety cap
+
+    const idx_of = (x,y) => y*W + x;
+
+    // Decode helpers
+    const powIndex = new Map();
+    const indexToCoord = [];
+    for (let i=0;i<BOARD_CELLS;i++) {
+      const bit = 1n << BigInt(i);
+      powIndex.set(bit.toString(), i);
+      indexToCoord.push([i % W, Math.floor(i / W)]);
+    }
+
+    // ---------- Candidate placements via axial offsets ----------
+    const all_shape_placements = [];
+    const shape_sizes = [];
+
+    for (const shape of this.shapes) {
+      const rots = shape.rotations();
+      const seenOffsets = new Set();
+      const rotationOffsets = [];
+      for (const rot of rots) {
+        const offs = offsetsFromPivotAxial(rot);
+        const key = offsetsKey(offs);
+        if (!seenOffsets.has(key)) { seenOffsets.add(key); rotationOffsets.push(offs); }
+      }
+
+      let placements = [];
+      const sz = shape.cells.length;
+      shape_sizes.push(sz);
+
+      for (const offs of rotationOffsets) {
+        for (let py=0; py<H; py++) {
+          for (let px=0; px<W; px++) {
+            const [pq, pr] = oddq_to_axial([px, py]);
+            let mask = 0n, ok = true;
+            for (const [dq, dr] of offs) {
+              const q = pq + dq, r = pr + dr;
+              const [cx, cy] = axial_to_oddq([q, r]);
+              if (!(0 <= cx && cx < W && 0 <= cy && cy < H)) { ok = false; break; }
+              mask |= (1n << BigInt(idx_of(cx, cy)));
+            }
+            if (ok) placements.push(mask);
+          }
+        }
+      }
+
+      if (placements.length === 0) { this.redraw(); this.board.drawMessage('No placement available'); return; }
+      placements = Array.from(new Set(placements.map(m => m.toString())), s => BigInt(s));
+      all_shape_placements.push(placements);
+    }
+
+    // ---------- MRV order ----------
+    const order = [...all_shape_placements.keys()].sort((a,b) => all_shape_placements[a].length - all_shape_placements[b].length);
+    const placements_ordered = order.map(i => all_shape_placements[i]);
+    const sizes_ordered = order.map(i => shape_sizes[i]);
+
+    // Seeds (depth 0) to parallelize
+    const seeds = placements_ordered[0];
+    if (!seeds.length) { this.redraw(); this.board.drawMessage('No placement available'); return; }
+
+    const finishWhenReady = (solutions) => {
+      if (!solutions.length) {
+        this.redraw(); this.board.drawMessage('No placement available'); return;
+      }
+      this.solutionMasks = solutions;
+      this.solutionIndex = 0;
+      this.decodeHelpers = { powIndex, indexToCoord, order };
+      this.applySolutionByIndex(0);
+    };
+
+    // ---------- Multithreaded enumeration ----------
+    const haveWorkers = typeof Worker !== 'undefined';
+    const THREADS = Math.min(
+      seeds.length,
+      Math.max(2, Math.min((navigator.hardwareConcurrency || 4), 8))
+    );
+
+    if (!haveWorkers || THREADS <= 1) {
+      // Single-threaded enumeration up to MAX_SOLUTIONS
+      const n = placements_ordered.length;
+      const remain = new Array(n + 1).fill(0);
+      for (let i = n - 1; i >= 0; i--) remain[i] = remain[i + 1] + sizes_ordered[i];
+
+      const bitCount = (x) => { let c = 0; while (x) { x &= (x - 1n); c++; } return c; };
+      const solutions = [];
+
+      const dfs = (depth, occ, chosen) => {
+        if (solutions.length >= MAX_SOLUTIONS) return false;
+        const free = BOARD_CELLS - bitCount(occ);
+        if (remain[depth] > free) return true; // prune, continue other branches
+        if (depth === n) { solutions.push(chosen.slice()); return solutions.length < MAX_SOLUTIONS; }
+
+        const plist = placements_ordered[depth];
+        for (let i=0;i<plist.length;i++) {
+          const mask = plist[i];
+          if ((mask & occ) !== 0n) continue;
+          chosen[depth] = mask;
+          if (!dfs(depth + 1, occ | mask, chosen)) return false;
+        }
+        return true;
+      };
+
+      for (let s = 0; s < seeds.length && solutions.length < MAX_SOLUTIONS; s++) {
+        const chosen = new Array(placements_ordered.length).fill(0n);
+        chosen[0] = seeds[s];
+        dfs(1, seeds[s], chosen);
+      }
+      finishWhenReady(solutions);
+      return;
+    }
+
+    // Worker pool enumeration
+    const workerURL = createSolverWorkerURL();
+    const workers = [];
+    const chunks = chunk(seeds, THREADS);
+    const perWorkerLimit = Math.max(1, Math.ceil(MAX_SOLUTIONS / chunks.length));
+    let pending = chunks.length;
+    const allSolutions = [];
+
+    const payloadBase = {
+      placements_ordered,
+      sizes_ordered,
+      board_cells: BOARD_CELLS
+    };
+
+    const cleanup = () => {
+      workers.forEach(w => { try { w.terminate(); } catch {} });
+      URL.revokeObjectURL(workerURL);
+    };
+
+    chunks.forEach((seedsChunk) => {
+      const w = new Worker(workerURL);
+      workers.push(w);
+      w.onmessage = (ev) => {
+        const { ok, solutions } = ev.data || {};
+        if (ok && Array.isArray(solutions)) {
+          for (const sol of solutions) {
+            if (allSolutions.length < MAX_SOLUTIONS) allSolutions.push(sol);
+          }
+        }
+        pending--;
+        if (pending === 0 || allSolutions.length >= MAX_SOLUTIONS) {
+          cleanup();
+          finishWhenReady(allSolutions);
+        }
+      };
+      w.onerror = () => {
+        pending--;
+        if (pending === 0) { cleanup(); finishWhenReady(allSolutions); }
+      };
+      w.postMessage({ ...payloadBase, seeds: seedsChunk, limit: perWorkerLimit });
+    });
+  }
+
+  redraw() {
+    this.board.draw();
+    this.update_shape_list();
+  }
+}
+
+/* Boot */
+const app = new App();
+</script>
+</body>
+</html>
