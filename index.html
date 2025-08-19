@@ -42,6 +42,12 @@
   .solControls { display:flex; align-items:center; gap:8px; }
   .solControls input[type="number"] { width: 72px; padding:6px 8px; border:1px solid #ccc; border-radius:8px; }
   .pill { padding: 6px 10px; border:1px solid #eee; border-radius: 999px; background:#f7f7f7; }
+
+  .sizeControls { display:flex; align-items:center; gap:6px; }
+  .sizeControls input[type="number"] {
+    width: 64px; padding:6px 8px; border:1px solid #ccc; border-radius:8px;
+  }
+  .xsep { opacity:.6; }
 </style>
 </head>
 <body>
@@ -49,6 +55,16 @@
     <button id="btnAdd">Add Shape</button>
     <button id="btnSolve">Find placement</button>
     <button id="btnClear">Clear</button>
+
+    <!-- NEW: dynamic board size controls -->
+    <div class="sizeControls">
+      <span class="hint">Board</span>
+      <input id="inpW" type="number" min="1" max="50" value="7" />
+      <span class="xsep">×</span>
+      <input id="inpH" type="number" min="1" max="50" value="6" />
+      <button id="btnApplySize" title="Apply board size (Enter also works)">Apply</button>
+    </div>
+
     <div class="grow"></div>
     <div class="solControls">
       <label class="hint">Max solutions</label>
@@ -211,7 +227,7 @@ function drawHex(ctx, cx, cy, r, fill, stroke, alpha=1) {
   ctx.save();
   ctx.beginPath();
   for (let i=0;i<6;i++) {
-    const ang = (Math.PI/180) * (60*i + 60); 
+    const ang = (Math.PI/180) * (60*i + 60);
     const vx = cx + r * Math.cos(ang);
     const vy = cy + r * Math.sin(ang);
     if (i===0) ctx.moveTo(vx,vy); else ctx.lineTo(vx,vy);
@@ -226,25 +242,53 @@ function drawHex(ctx, cx, cy, r, fill, stroke, alpha=1) {
 
 /* ================================
  *  HexBoard (0,0 at bottom-left)
+ *  — now resizable at runtime
  * ================================ */
 class HexBoard {
   constructor(width, height, canvas) {
-    this.width = width;
-    this.height = height;
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-
     this.radius = 40;
     this.dx = 1.5 * this.radius;
     this.dy = Math.sqrt(3) * this.radius;
-
     this.marginX = 100;
     this.marginY = 100;
 
-    this.cells = [];
-    for (let y=0;y<height;y++) for (let x=0;x<width;x++) this.cells.push([x,y]);
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
     this.filled = new Map();     // "x,y" -> color
     this.hexCenters = new Map(); // "x,y" -> [cx,cy]
+
+    this.setSize(width, height);
+  }
+
+  setSize(width, height) {
+    // clamp to sane bounds
+    this.width = Math.max(1, Math.min(50, Number(width) || 1));
+    this.height = Math.max(1, Math.min(50, Number(height) || 1));
+
+    // rebuild cell list
+    this.cells = [];
+    for (let y=0;y<this.height;y++) for (let x=0;x<this.width;x++) this.cells.push([x,y]);
+
+    // clear current fillings (coords no longer valid after resize)
+    this.clear_all();
+
+    // recalc canvas pixel size to fit new grid snugly
+    this.updateCanvasSize();
+    this.draw();
+  }
+
+  updateCanvasSize() {
+    // Horizontal span: centers are spaced by dx; add hex radius padding and margins
+    const spanX = this.dx * (this.width - 1) + 2 * this.radius;
+    // Vertical span: union of even/odd columns => dy*(H-1) + dy/2; add hex radius padding
+    const spanY = this.dy * (this.height - 1) + (this.dy / 2) + 2 * this.radius;
+
+    const pxW = Math.ceil(this.marginX * 2 + spanX);
+    const pxH = Math.ceil(this.marginY * 2 + spanY);
+
+    // Set both attributes (resolution) and style size (auto keeps aspect)
+    this.canvas.width = pxW;
+    this.canvas.height = pxH;
   }
 
   // bottom-left origin: flip y visually
@@ -262,8 +306,6 @@ class HexBoard {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '10px system-ui';
-
-    const textOffset = this.radius * 0.35;
 
     for (const [x,y] of this.cells) {
       const [cx,cy] = this.cell_center(x,y);
@@ -349,7 +391,6 @@ class Shape {
 
 /* ================================
  *  Worker factory + chunk util
- *  (collects multiple solutions per worker)
  * ================================ */
 function createSolverWorkerURL() {
   const src = `
@@ -414,6 +455,19 @@ class App {
     document.getElementById('btnPrev').addEventListener('click', () => this.showPrevSolution());
     document.getElementById('btnNext').addEventListener('click', () => this.showNextSolution());
 
+    // NEW: size controls
+    this.inpW = document.getElementById('inpW');
+    this.inpH = document.getElementById('inpH');
+    document.getElementById('btnApplySize').addEventListener('click', () => this.applySize());
+    // apply on Enter too
+    const submitOnEnter = (el) => {
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); this.applySize(); }
+      });
+    };
+    submitOnEnter(this.inpW);
+    submitOnEnter(this.inpH);
+
     this.canvas.addEventListener('click', (ev) => {
       const rect = this.canvas.getBoundingClientRect();
       const x = (ev.clientX - rect.left);
@@ -437,6 +491,21 @@ class App {
     this.decodeHelpers = null; // {powIndex, indexToCoord, order}
     this.updateSolutionControls();
 
+    this.redraw();
+  }
+
+  applySize() {
+    const W = Math.max(1, Math.min(50, Number(this.inpW.value) || 1));
+    const H = Math.max(1, Math.min(50, Number(this.inpH.value) || 1));
+    this.inpW.value = String(W);
+    this.inpH.value = String(H);
+
+    // Resizing invalidates board coordinates; clear transient state
+    this.board.hideMessage();
+    this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
+    this.current_shape_coords = [];
+
+    this.board.setSize(W, H);
     this.redraw();
   }
 
