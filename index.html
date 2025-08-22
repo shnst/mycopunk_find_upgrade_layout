@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Hex Board — Multi-solution solver</title>
+<title>Mycopunk Upgrade Placement Solver</title>
 <style>
   :root { --panel-w: 360px; --bg: #fafafa; --ink: #222; --stroke: #7a4a2e; }
   * { box-sizing: border-box; }
@@ -35,6 +35,7 @@
     display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
     padding: 8px; border: 1px solid #eee; border-radius: 10px;
   }
+  .shapeMeta { display:flex; align-items:center; gap:10px; }
   .shapeItem canvas { background: #fff; border: 1px dashed #ddd; border-radius: 8px; }
   .shapeItem button { padding: 6px 8px; }
   .hint { opacity: 0.8; font-size: 12px; }
@@ -48,6 +49,9 @@
     width: 64px; padding:6px 8px; border:1px solid #ccc; border-radius:8px;
   }
   .xsep { opacity:.6; }
+
+  .check { display:flex; align-items:center; gap:6px; user-select:none; }
+  .check input { transform: translateY(1px); }
 </style>
 </head>
 <body>
@@ -56,7 +60,6 @@
     <button id="btnSolve">Find placement</button>
     <button id="btnClear">Clear</button>
 
-    <!-- NEW: dynamic board size controls -->
     <div class="sizeControls">
       <span class="hint">Board</span>
       <input id="inpW" type="number" min="1" max="50" value="7" />
@@ -242,7 +245,6 @@ function drawHex(ctx, cx, cy, r, fill, stroke, alpha=1) {
 
 /* ================================
  *  HexBoard (0,0 at bottom-left)
- *  — now resizable at runtime
  * ================================ */
 class HexBoard {
   constructor(width, height, canvas) {
@@ -254,44 +256,31 @@ class HexBoard {
 
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.filled = new Map();     // "x,y" -> color
-    this.hexCenters = new Map(); // "x,y" -> [cx,cy]
+    this.filled = new Map();
+    this.hexCenters = new Map();
 
     this.setSize(width, height);
   }
 
   setSize(width, height) {
-    // clamp to sane bounds
     this.width = Math.max(1, Math.min(50, Number(width) || 1));
     this.height = Math.max(1, Math.min(50, Number(height) || 1));
-
-    // rebuild cell list
     this.cells = [];
     for (let y=0;y<this.height;y++) for (let x=0;x<this.width;x++) this.cells.push([x,y]);
-
-    // clear current fillings (coords no longer valid after resize)
     this.clear_all();
-
-    // recalc canvas pixel size to fit new grid snugly
     this.updateCanvasSize();
     this.draw();
   }
 
   updateCanvasSize() {
-    // Horizontal span: centers are spaced by dx; add hex radius padding and margins
     const spanX = this.dx * (this.width - 1) + 2 * this.radius;
-    // Vertical span: union of even/odd columns => dy*(H-1) + dy/2; add hex radius padding
     const spanY = this.dy * (this.height - 1) + (this.dy / 2) + 2 * this.radius;
-
     const pxW = Math.ceil(this.marginX * 2 + spanX);
     const pxH = Math.ceil(this.marginY * 2 + spanY);
-
-    // Set both attributes (resolution) and style size (auto keeps aspect)
     this.canvas.width = pxW;
     this.canvas.height = pxH;
   }
 
-  // bottom-left origin: flip y visually
   cell_center(x,y) {
     const yDown = (this.height - 1 - y);
     const draw_x = this.dx * x + this.marginX;
@@ -347,6 +336,7 @@ class Shape {
     this.cells = cloneCells(cells);
     this.color = color;
     this.pivot = get_pivot(this.cells) || [0,0];
+    this.prism = false; // NEW: whether this shape must be adjacent to other prisms
   }
 
   drawToCanvas(canvas) {
@@ -390,7 +380,7 @@ class Shape {
 }
 
 /* ================================
- *  Worker factory + chunk util
+ *  Worker factory + chunk util (unchanged)
  * ================================ */
 function createSolverWorkerURL() {
   const src = `
@@ -455,11 +445,10 @@ class App {
     document.getElementById('btnPrev').addEventListener('click', () => this.showPrevSolution());
     document.getElementById('btnNext').addEventListener('click', () => this.showNextSolution());
 
-    // NEW: size controls
+    // size controls
     this.inpW = document.getElementById('inpW');
     this.inpH = document.getElementById('inpH');
     document.getElementById('btnApplySize').addEventListener('click', () => this.applySize());
-    // apply on Enter too
     const submitOnEnter = (el) => {
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); this.applySize(); }
@@ -486,9 +475,9 @@ class App {
     this.current_base = [0,0];
 
     // Solutions browsing state
-    this.solutionMasks = []; // array of arrays<BigInt> (each is chosen_masks)
+    this.solutionMasks = [];
     this.solutionIndex = 0;
-    this.decodeHelpers = null; // {powIndex, indexToCoord, order}
+    this.decodeHelpers = null;
     this.updateSolutionControls();
 
     this.redraw();
@@ -500,7 +489,6 @@ class App {
     this.inpW.value = String(W);
     this.inpH.value = String(H);
 
-    // Resizing invalidates board coordinates; clear transient state
     this.board.hideMessage();
     this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
     this.current_shape_coords = [];
@@ -523,7 +511,7 @@ class App {
     let dx = 0, dy = 0;
     if (key === 'arrowleft') dx = -1;
     else if (key === 'arrowright') dx = 1;
-    else if (key === 'arrowup') dy = 1;      // bottom-left origin
+    else if (key === 'arrowup') dy = 1;
     else if (key === 'arrowdown') dy = -1;
     else if (key === 'r') {
       const rotated = rotate_shape(this.current_shape_coords, 1, this.board.width, this.board.height);
@@ -559,7 +547,12 @@ class App {
     this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
     this.redraw();
   }
-  remove_shape(index) { if (index >= 0 && index < this.shapes.length) { this.shapes.splice(index, 1); this.redraw(); } }
+  remove_shape(index) {
+    if (index >= 0 && index < this.shapes.length) {
+      this.shapes.splice(index, 1);
+      this.redraw();
+    }
+  }
   clear_board() {
     this.board.clear_all();
     this.current_shape_coords = [];
@@ -567,6 +560,8 @@ class App {
     this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
     this.redraw();
   }
+
+  /* ---------- UI: list with Prism checkbox ---------- */
   update_shape_list() {
     const list = document.getElementById('shapeList');
     list.innerHTML = '';
@@ -574,16 +569,44 @@ class App {
     this.shapes.forEach((shape, i) => {
       const item = document.createElement('div');
       item.className = 'shapeItem';
+
+      const meta = document.createElement('div');
+      meta.className = 'shapeMeta';
+
       const canvas = document.createElement('canvas');
       canvas.width = 200; canvas.height = 110;
       shape.drawToCanvas(canvas);
+
+      const controls = document.createElement('div');
+      controls.style.display = 'grid';
+      controls.style.gap = '6px';
+      controls.style.justifyItems = 'end';
+
+      const prismWrap = document.createElement('label');
+      prismWrap.className = 'check';
+      const prismChk = document.createElement('input');
+      prismChk.type = 'checkbox';
+      prismChk.checked = shape.prism;
+      prismChk.addEventListener('change', () => { shape.prism = prismChk.checked; });
+      const prismTxt = document.createElement('span');
+      prismTxt.textContent = 'Prism';
+      prismWrap.appendChild(prismChk);
+      prismWrap.appendChild(prismTxt);
+
       const btn = document.createElement('button');
       btn.textContent = 'Remove';
       btn.addEventListener('click', () => this.remove_shape(i));
-      item.appendChild(canvas); item.appendChild(btn);
+
+      meta.appendChild(canvas);
+      controls.appendChild(prismWrap);
+      controls.appendChild(btn);
+
+      item.appendChild(meta);
+      item.appendChild(controls);
       list.appendChild(item);
     });
   }
+
   updateSolutionControls() {
     const prev = document.getElementById('btnPrev');
     const next = document.getElementById('btnNext');
@@ -619,7 +642,45 @@ class App {
   }
 
   /* ================================
-   *  Multithreaded multi-solution solver (axial offsets)
+   *  Helpers for solver
+   * ================================ */
+  buildNeighborMasks(W, H) {
+    const idx_of = (x,y) => y*W + x;
+    const masks = new Array(W*H).fill(0n);
+    for (let y=0;y<H;y++) {
+      for (let x=0;x<W;x++) {
+        const [q,r] = oddq_to_axial([x,y]);
+        const nbrsAx = [[+1,0],[+1,-1],[0,-1],[-1,0],[-1,+1],[0,+1]];
+        let mask = 0n;
+        for (const [dq,dr] of nbrsAx) {
+          const [qq, rr] = [q+dq, r+dr];
+          const [nx, ny] = axial_to_oddq([qq, rr]);
+          if (0 <= nx && nx < W && 0 <= ny && ny < H) {
+            const bi = idx_of(nx, ny);
+            mask |= (1n << BigInt(bi));
+          }
+        }
+        masks[idx_of(x,y)] = mask;
+      }
+    }
+    return masks;
+  }
+  neighborOfMask(mask, neighborMasks) {
+    let res = 0n;
+    while (mask) {
+      const lsb = mask & (-mask);
+      const bitIndex = Number(BigInt.asUintN(64, lsb).toString() === lsb.toString()
+                        ? BigInt(Math.log2(Number(lsb))) // fast path for small boards
+                        : BigInt(this._bitIndexFromPow(lsb))); // fallback (rare)
+      // Fallback helper replaced by map in decodeHelpers; this path not used here.
+      res |= neighborMasks[bitIndex];
+      mask ^= lsb;
+    }
+    return res;
+  }
+
+  /* ================================
+   *  Multithreaded solver + Prism constraint
    * ================================ */
   find_placement() {
     this.board.hideMessage();
@@ -634,7 +695,7 @@ class App {
     if (total_cells > BOARD_CELLS) { this.redraw(); this.board.drawMessage('No placement available'); return; }
 
     const requestedMax = Math.max(1, Math.min(200, Number(document.getElementById('maxSol').value) || 5));
-    const MAX_SOLUTIONS = Math.min(requestedMax, 100); // safety cap
+    const MAX_SOLUTIONS = Math.min(requestedMax, 100);
 
     const idx_of = (x,y) => y*W + x;
 
@@ -647,9 +708,11 @@ class App {
       indexToCoord.push([i % W, Math.floor(i / W)]);
     }
 
-    // ---------- Candidate placements via axial offsets ----------
+    // Candidate placements via axial offsets
     const all_shape_placements = [];
     const shape_sizes = [];
+    const prism_flags = this.shapes.map(s => !!s.prism);
+    const anyPrism = prism_flags.some(Boolean);
 
     for (const shape of this.shapes) {
       const rots = shape.rotations();
@@ -686,12 +749,16 @@ class App {
       all_shape_placements.push(placements);
     }
 
-    // ---------- MRV order ----------
+    // MRV order
     const order = [...all_shape_placements.keys()].sort((a,b) => all_shape_placements[a].length - all_shape_placements[b].length);
     const placements_ordered = order.map(i => all_shape_placements[i]);
     const sizes_ordered = order.map(i => shape_sizes[i]);
+    const prism_ordered = order.map(i => prism_flags[i]);
 
-    // Seeds (depth 0) to parallelize
+    // Neighbor masks for prism adjacency pruning
+    const neighborMasks = this.buildNeighborMasks(W, H);
+
+    // Seeds for parallel enumeration
     const seeds = placements_ordered[0];
     if (!seeds.length) { this.redraw(); this.board.drawMessage('No placement available'); return; }
 
@@ -705,7 +772,76 @@ class App {
       this.applySolutionByIndex(0);
     };
 
-    // ---------- Multithreaded enumeration ----------
+    // ---------- If any prism is selected, use single-threaded DFS with adjacency constraint ----------
+    if (anyPrism) {
+      const n = placements_ordered.length;
+      const remain = new Array(n + 1).fill(0);
+      for (let i = n - 1; i >= 0; i--) remain[i] = remain[i + 1] + sizes_ordered[i];
+
+      const bitCount = (x) => { let c = 0; while (x) { x &= (x - 1n); c++; } return c; };
+
+      const solutions = [];
+
+      // Compute neighbor-of-union quickly
+      const neighborOf = (mask) => {
+        let res = 0n;
+        let m = mask;
+        while (m) {
+          const lsb = m & (-m);
+          const bit = powIndex.get(lsb.toString());
+          res |= neighborMasks[bit];
+          m ^= lsb;
+        }
+        return res;
+      };
+
+      const dfs = (depth, occ, chosen, prismUnion, prismPlacedCount) => {
+        if (solutions.length >= MAX_SOLUTIONS) return false;
+
+        const free = BOARD_CELLS - bitCount(occ);
+        if (remain[depth] > free) return true; // prune but keep exploring siblings
+
+        if (depth === n) {
+          // Stepwise adjacency guarantees connectivity of prisms
+          solutions.push(chosen.slice());
+          return solutions.length < MAX_SOLUTIONS;
+        }
+
+        const plist = placements_ordered[depth];
+        const isPrism = prism_ordered[depth];
+
+        // If this is a prism and some prism already placed, precompute border for fast check
+        const needAdjacency = isPrism && prismPlacedCount > 0;
+        const border = needAdjacency ? neighborOf(prismUnion) : 0n;
+
+        for (let i=0;i<plist.length;i++) {
+          const mask = plist[i];
+          if ((mask & occ) !== 0n) continue;
+
+          if (needAdjacency && (mask & border) === 0n) continue; // must touch existing prism cluster
+
+          chosen[depth] = mask;
+          const nextUnion = isPrism ? (prismUnion | mask) : prismUnion;
+          const nextCount = isPrism ? (prismPlacedCount + 1) : prismPlacedCount;
+
+          if (!dfs(depth + 1, occ | mask, chosen, nextUnion, nextCount)) return false;
+        }
+        return true;
+      };
+
+      for (let s = 0; s < seeds.length && solutions.length < MAX_SOLUTIONS; s++) {
+        const chosen = new Array(placements_ordered.length).fill(0n);
+        chosen[0] = seeds[s];
+        const firstIsPrism = prism_ordered[0];
+        const firstUnion = firstIsPrism ? seeds[s] : 0n;
+        const firstCount = firstIsPrism ? 1 : 0;
+        dfs(1, seeds[s], chosen, firstUnion, firstCount);
+      }
+      finishWhenReady(solutions);
+      return;
+    }
+
+    // ---------- No prism: keep multithreaded enumeration ----------
     const haveWorkers = typeof Worker !== 'undefined';
     const THREADS = Math.min(
       seeds.length,
@@ -724,7 +860,7 @@ class App {
       const dfs = (depth, occ, chosen) => {
         if (solutions.length >= MAX_SOLUTIONS) return false;
         const free = BOARD_CELLS - bitCount(occ);
-        if (remain[depth] > free) return true; // prune, continue other branches
+        if (remain[depth] > free) return true;
         if (depth === n) { solutions.push(chosen.slice()); return solutions.length < MAX_SOLUTIONS; }
 
         const plist = placements_ordered[depth];
@@ -746,7 +882,7 @@ class App {
       return;
     }
 
-    // Worker pool enumeration
+    // Worker pool enumeration (no prism constraints)
     const workerURL = createSolverWorkerURL();
     const workers = [];
     const chunks = chunk(seeds, THREADS);
