@@ -56,16 +56,16 @@
 </head>
 <body>
   <header>
-    <button id="btnAdd">Add Shape</button>
-    <button id="btnSolve">Find placement</button>
-    <button id="btnClear">Clear</button>
+    <button id="btnAdd">➕ Add shape</button>
+    <button id="btnSolve">🔎 Find placement</button>
+    <button id="btnClear">🧹 Clear</button>
 
     <div class="sizeControls">
       <span class="hint">Board</span>
       <input id="inpW" type="number" min="1" max="50" value="7" />
       <span class="xsep">×</span>
       <input id="inpH" type="number" min="1" max="50" value="6" />
-      <button id="btnApplySize" title="Apply board size (Enter also works)">Apply</button>
+      <!-- Apply button removed; auto-apply on input -->
     </div>
 
     <div class="grow"></div>
@@ -336,7 +336,7 @@ class Shape {
     this.cells = cloneCells(cells);
     this.color = color;
     this.pivot = get_pivot(this.cells) || [0,0];
-    this.prism = false; // NEW: whether this shape must be adjacent to other prisms
+    this.prism = false; // whether this shape must be adjacent to other prisms
   }
 
   drawToCanvas(canvas) {
@@ -445,17 +445,15 @@ class App {
     document.getElementById('btnPrev').addEventListener('click', () => this.showPrevSolution());
     document.getElementById('btnNext').addEventListener('click', () => this.showNextSolution());
 
-    // size controls
+    // size controls (auto-apply on input/change)
     this.inpW = document.getElementById('inpW');
     this.inpH = document.getElementById('inpH');
-    document.getElementById('btnApplySize').addEventListener('click', () => this.applySize());
-    const submitOnEnter = (el) => {
-      el.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); this.applySize(); }
-      });
-    };
-    submitOnEnter(this.inpW);
-    submitOnEnter(this.inpH);
+    const debounce = (fn, ms = 200) => { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); }; };
+    const debouncedApply = debounce(() => this.applySize(), 200);
+    ['input','change'].forEach(evt => {
+      this.inpW.addEventListener(evt, debouncedApply);
+      this.inpH.addEventListener(evt, debouncedApply);
+    });
 
     this.canvas.addEventListener('click', (ev) => {
       const rect = this.canvas.getBoundingClientRect();
