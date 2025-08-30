@@ -300,7 +300,7 @@ class HexBoard {
       const [cx,cy] = this.cell_center(x,y);
       const color = this.filled.get(toKey(x,y)) || "white";
       const isFilled = this.filled.has(toKey(x,y));
-      drawHex(ctx, cx, cy, this.radius, color, null);
+      drawHex(ctx, cx, cy, this.radius, color, null, 0.8);
       this.hexCenters.set(toKey(x,y), [cx,cy]);
     }
   }
@@ -361,7 +361,7 @@ class Shape {
       const yDown = (maxy - y);
       const cx = offx + dx * x;
       const cy = offy + dy * yDown - (x % 2 ? 0 : (dy/2));
-      drawHex(ctx, cx, cy, radius, this.color, null, 0.3);
+      drawHex(ctx, cx, cy, radius, this.color, null, 0.8);
     }
   }
 
