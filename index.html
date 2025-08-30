@@ -28,25 +28,17 @@
     font-size: 20px; font-weight: 600; color: #c00; background: rgba(255,255,255,0.7);
     pointer-events: none;
   }
+  /* Aside is a 3-row grid so the 3rd row (the list) can scroll independently */
   aside {
     border-left: 1px solid #ddd; background: #fff; min-width: 0;
-    /* Important: allow the grid child to shrink to enable inner scrolling */
-    min-height: 0;
-    display: grid;
-    /* 3 rows: header, hint, and a flexible row for the scroll area */
-    grid-template-rows: auto auto 1fr;
+    display: grid; grid-template-rows: auto auto 1fr;
+    min-height: 0; /* allow inner scroll area to shrink */
   }
-
-  /* keep, but add min-height: 0 so it can actually scroll inside the grid row */
-  #shapeList {
-    overflow: auto;
-    padding: 10px;
-    display: grid;
-    gap: 10px;
-    min-height: 0;  /* 👈 critical for inner scrolling in CSS Grid */
+  .sideHeader {
+    padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600;
+    display:flex; align-items:center; gap:8px;
   }
-  .sideHeader { padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600; }
-  #shapeList { overflow: auto; padding: 10px; display: grid; gap: 10px; }
+  #shapeList { overflow: auto; padding: 10px; display: grid; gap: 10px; min-height: 0; }
   .shapeItem {
     display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
     padding: 8px; border: 1px solid #eee; border-radius: 10px;
@@ -59,19 +51,24 @@
   .solControls { display:flex; align-items:center; gap:8px; }
   .solControls input[type="number"] { width: 72px; padding:6px 8px; border:1px solid #ccc; border-radius:8px; }
   .pill { padding: 6px 10px; border:1px solid #eee; border-radius: 999px; background:#f7f7f7; }
-
   .sizeControls { display:flex; align-items:center; gap:6px; }
-  .sizeControls input[type="number"] {
-    width: 64px; padding:6px 8px; border:1px solid #ccc; border-radius:8px;
-  }
+  .sizeControls input[type="number"] { width: 64px; padding:6px 8px; border:1px solid #ccc; border-radius:8px; }
   .xsep { opacity:.6; }
-
   .check { display:flex; align-items:center; gap:6px; user-select:none; }
   .check input { transform: translateY(1px); }
-  /* --- Sophisticated side UI bits --- */
   .badge { padding:2px 8px; border:1px solid #e6e8eb; border-radius:999px; font-size:12px; background:#f7f7f8; color:#444; }
   .sideHint { padding:10px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px; background:#fafafa; }
   .sideHint kbd { font: 500 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#f1f5f9; border:1px solid #e5e7eb; padding:2px 6px; border-radius:6px; }
+  /* Ghost button style for "Remove all" */
+  .btn-ghost {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .btn-ghost:hover { border-color: #aaa; }
 </style>
 </head>
 <body>
@@ -85,7 +82,6 @@
       <input id="inpW" type="number" min="1" max="50" value="7" />
       <span class="xsep">×</span>
       <input id="inpH" type="number" min="1" max="50" value="6" />
-      <!-- Apply button removed; auto-apply on input -->
     </div>
 
     <div class="grow"></div>
@@ -97,13 +93,18 @@
       <button id="btnNext" disabled>▶</button>
     </div>
   </header>
+
   <main>
     <div id="boardWrap">
       <canvas id="board" width="900" height="560"></canvas>
       <div id="overlayMessage">No placement available</div>
     </div>
     <aside>
-      <div class="sideHeader"><strong>Shapes</strong> <span id="shapeCount" class="badge">0</span></div>
+      <div class="sideHeader">
+        <strong>Shapes</strong>
+        <span id="shapeCount" class="badge">0</span>
+        <button id="btnRemoveAll" class="btn-ghost" style="display:none;">Remove all</button>
+      </div>
       <div id="emptyState" class="sideHint">Draw a shape on the board by clicking cells, then press <b>Add shape</b> (or hit <kbd>Enter</kbd>) to save it here.</div>
       <div id="shapeList"></div>
     </aside>
@@ -227,7 +228,7 @@ function rotate_shape(cells, times, max_width, max_height) {
 }
 
 /* ================================
- *  Axial offsets (correct placement math)
+ *  Axial offsets (placement math)
  * ================================ */
 function offsetsFromPivotAxial(cells) {
   const pivot = get_pivot(cells);
@@ -320,7 +321,6 @@ class HexBoard {
     for (const [x,y] of this.cells) {
       const [cx,cy] = this.cell_center(x,y);
       const color = this.filled.get(toKey(x,y)) || "white";
-      const isFilled = this.filled.has(toKey(x,y));
       drawHex(ctx, cx, cy, this.radius, color, null, 0.8);
       this.hexCenters.set(toKey(x,y), [cx,cy]);
     }
@@ -376,8 +376,6 @@ class Shape {
     const offx = (canvas.width - w)/2 + radius;
     const offy = (canvas.height - h)/2 + radius;
 
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '9px system-ui';
-
     for (const [x,y] of norm) {
       const yDown = (maxy - y);
       const cx = offx + dx * x;
@@ -401,7 +399,7 @@ class Shape {
 }
 
 /* ================================
- *  Worker factory + chunk util (unchanged)
+ *  Worker factory + chunk util
  * ================================ */
 function createSolverWorkerURL() {
   const src = `
@@ -465,6 +463,7 @@ class App {
     document.getElementById('btnClear').addEventListener('click', () => this.clear_board());
     document.getElementById('btnPrev').addEventListener('click', () => this.showPrevSolution());
     document.getElementById('btnNext').addEventListener('click', () => this.showNextSolution());
+    document.getElementById('btnRemoveAll').addEventListener('click', () => this.remove_all_shapes());
 
     // size controls (auto-apply on input/change)
     this.inpW = document.getElementById('inpW');
@@ -580,6 +579,15 @@ class App {
       this.redraw();
     }
   }
+  remove_all_shapes() {
+    if (this.shapes.length === 0) return;
+    this.shapes = [];
+    this.board.clear_all();
+    this.current_shape_coords = [];
+    this.board.hideMessage();
+    this.solutionMasks = []; this.solutionIndex = 0; this.decodeHelpers = null; this.updateSolutionControls();
+    this.redraw();
+  }
   clear_board() {
     this.board.clear_all();
     this.current_shape_coords = [];
@@ -593,10 +601,14 @@ class App {
     const list = document.getElementById('shapeList');
     const empty = document.getElementById('emptyState');
     const countEl = document.getElementById('shapeCount');
+    const removeAllBtn = document.getElementById('btnRemoveAll');
     list.innerHTML = '';
 
     // Count badge
     if (countEl) countEl.textContent = String(this.shapes.length);
+
+    // Show/hide "Remove all" button
+    if (removeAllBtn) removeAllBtn.style.display = this.shapes.length > 0 ? 'inline-block' : 'none';
 
     // Empty state guidance
     if (this.shapes.length === 0) {
@@ -705,19 +717,6 @@ class App {
     }
     return masks;
   }
-  neighborOfMask(mask, neighborMasks) {
-    let res = 0n;
-    while (mask) {
-      const lsb = mask & (-mask);
-      const bitIndex = Number(BigInt.asUintN(64, lsb).toString() === lsb.toString()
-                        ? BigInt(Math.log2(Number(lsb))) // fast path for small boards
-                        : BigInt(this._bitIndexFromPow(lsb))); // fallback (rare)
-      // Fallback helper replaced by map in decodeHelpers; this path not used here.
-      res |= neighborMasks[bitIndex];
-      mask ^= lsb;
-    }
-    return res;
-  }
 
   /* ================================
    *  Multithreaded solver + Prism constraint
@@ -822,7 +821,6 @@ class App {
 
       const solutions = [];
 
-      // Compute neighbor-of-union quickly
       const neighborOf = (mask) => {
         let res = 0n;
         let m = mask;
@@ -842,7 +840,6 @@ class App {
         if (remain[depth] > free) return true; // prune but keep exploring siblings
 
         if (depth === n) {
-          // Stepwise adjacency guarantees connectivity of prisms
           solutions.push(chosen.slice());
           return solutions.length < MAX_SOLUTIONS;
         }
@@ -850,7 +847,6 @@ class App {
         const plist = placements_ordered[depth];
         const isPrism = prism_ordered[depth];
 
-        // If this is a prism and some prism already placed, precompute border for fast check
         const needAdjacency = isPrism && prismPlacedCount > 0;
         const border = needAdjacency ? neighborOf(prismUnion) : 0n;
 
