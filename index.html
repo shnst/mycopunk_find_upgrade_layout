@@ -52,6 +52,10 @@
 
   .check { display:flex; align-items:center; gap:6px; user-select:none; }
   .check input { transform: translateY(1px); }
+  /* --- Sophisticated side UI bits --- */
+  .badge { padding:2px 8px; border:1px solid #e6e8eb; border-radius:999px; font-size:12px; background:#f7f7f8; color:#444; }
+  .sideHint { padding:10px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px; background:#fafafa; }
+  .sideHint kbd { font: 500 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#f1f5f9; border:1px solid #e5e7eb; padding:2px 6px; border-radius:6px; }
 </style>
 </head>
 <body>
@@ -83,7 +87,8 @@
       <div id="overlayMessage">No placement available</div>
     </div>
     <aside>
-      <div class="sideHeader">Shapes</div>
+      <div class="sideHeader"><strong>Shapes</strong> <span id="shapeCount" class="badge">0</span></div>
+      <div id="emptyState" class="sideHint">Draw on the board by clicking cells, then press <b>Add shape</b> (or hit <kbd>Enter</kbd>) to save it here.</div>
       <div id="shapeList"></div>
     </aside>
   </main>
@@ -464,6 +469,14 @@ class App {
 
     window.addEventListener('keydown', (ev) => this.on_key(ev), { passive: false });
 
+    // Add shape with plain Enter (unless focused in size inputs)
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+        const t = e.target;
+        if (t !== this.inpW && t !== this.inpH) { e.preventDefault(); this.add_shape(); }
+      }
+    });
+
     // State
     this.shapes = [];
     this.color_index = 0;
@@ -562,8 +575,21 @@ class App {
   /* ---------- UI: list with Prism checkbox ---------- */
   update_shape_list() {
     const list = document.getElementById('shapeList');
+    const empty = document.getElementById('emptyState');
+    const countEl = document.getElementById('shapeCount');
     list.innerHTML = '';
-    if (this.shapes.length === 0) return;
+
+    // Count badge
+    if (countEl) countEl.textContent = String(this.shapes.length);
+
+    // Empty state guidance
+    if (this.shapes.length === 0) {
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    // Render list
     this.shapes.forEach((shape, i) => {
       const item = document.createElement('div');
       item.className = 'shapeItem';
