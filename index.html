@@ -28,7 +28,23 @@
     font-size: 20px; font-weight: 600; color: #c00; background: rgba(255,255,255,0.7);
     pointer-events: none;
   }
-  aside { border-left: 1px solid #ddd; background: #fff; min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+  aside {
+    border-left: 1px solid #ddd; background: #fff; min-width: 0;
+    /* Important: allow the grid child to shrink to enable inner scrolling */
+    min-height: 0;
+    display: grid;
+    /* 3 rows: header, hint, and a flexible row for the scroll area */
+    grid-template-rows: auto auto 1fr;
+  }
+
+  /* keep, but add min-height: 0 so it can actually scroll inside the grid row */
+  #shapeList {
+    overflow: auto;
+    padding: 10px;
+    display: grid;
+    gap: 10px;
+    min-height: 0;  /* 👈 critical for inner scrolling in CSS Grid */
+  }
   .sideHeader { padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600; }
   #shapeList { overflow: auto; padding: 10px; display: grid; gap: 10px; }
   .shapeItem {
@@ -88,7 +104,7 @@
     </div>
     <aside>
       <div class="sideHeader"><strong>Shapes</strong> <span id="shapeCount" class="badge">0</span></div>
-      <div id="emptyState" class="sideHint">Draw on the board by clicking cells, then press <b>Add shape</b> (or hit <kbd>Enter</kbd>) to save it here.</div>
+      <div id="emptyState" class="sideHint">Draw a shape on the board by clicking cells, then press <b>Add shape</b> (or hit <kbd>Enter</kbd>) to save it here.</div>
       <div id="shapeList"></div>
     </aside>
   </main>
