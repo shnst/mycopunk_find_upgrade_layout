@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Google tag (gtag.js) -->
+<!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-NTX1YS21Y0"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-
   gtag('config', 'G-NTX1YS21Y0');
 </script>
 <meta charset="utf-8" />
@@ -48,11 +47,21 @@
     display:flex; align-items:center; gap:8px;
   }
   #shapeList { overflow: auto; padding: 10px; display: grid; gap: 10px; min-height: 0; }
+
+  /* Card layout: 3 rows (top/mid/bottom) */
   .shapeItem {
-    display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+    display: grid;
+    grid-template-rows: auto auto auto; /* top, middle, bottom */
+    grid-template-columns: 1fr;
+    gap: 6px;
     padding: 8px; border: 1px solid #eee; border-radius: 10px;
   }
-  .shapeMeta { display:flex; align-items:center; gap:10px; }
+  .shapeTop { display:flex; align-items:center; justify-content:flex-start; }
+  .shapeMid { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:10px; }
+  .shapeBottom { display:flex; align-items:center; justify-content:flex-start; }
+  .shapeMeta { display:flex; align-items:center; gap:10px; } /* for canvas on the left */
+  .midControls { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+
   .shapeItem canvas { background: #fff; border: 1px dashed #ddd; border-radius: 8px; }
   .shapeItem button { padding: 6px 8px; }
   .hint { opacity: 0.8; font-size: 12px; }
@@ -68,6 +77,7 @@
   .badge { padding:2px 8px; border:1px solid #e6e8eb; border-radius:999px; font-size:12px; background:#f7f7f8; color:#444; }
   .sideHint { padding:10px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px; background:#fafafa; }
   .sideHint kbd { font: 500 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#f1f5f9; border:1px solid #e5e7eb; padding:2px 6px; border-radius:6px; }
+
   /* Ghost button style for "Remove all" */
   .btn-ghost {
     padding: 6px 10px;
@@ -78,6 +88,12 @@
     font-size: 12px;
   }
   .btn-ghost:hover { border-color: #aaa; }
+
+  /* Bottom-row adjacency inputs */
+  .adjRow { display:flex; align-items:center; gap:6px; width: 100%; }
+  .adjRow .check { margin-right: auto; }
+  .adjRow input[type="number"] { width: 64px; padding:6px 8px; border:1px solid #ccc; border-radius:8px; }
+  .indexBadge { font-weight:600; }
 </style>
 </head>
 <body>
@@ -365,7 +381,8 @@ class Shape {
     this.cells = cloneCells(cells);
     this.color = color;
     this.pivot = get_pivot(this.cells) || [0,0];
-    this.prism = false; // whether this shape must be adjacent to other prisms
+    this.prism = false;          // whether this shape must be adjacent to other prisms
+    this.adjacentTo = null;      // index (0-based) of the shape it must touch; null = disabled
   }
 
   drawToCanvas(canvas) {
@@ -532,6 +549,7 @@ class App {
   }
 
   on_key(event) {
+    // For debugging. Disabled.
     // const key = event.key.toLowerCase();
     // if (['arrowleft','arrowright','arrowup','arrowdown','r'].includes(key)) event.preventDefault();
     // if (this.board.filled.size === 0) return;
@@ -604,7 +622,7 @@ class App {
     this.redraw();
   }
 
-  /* ---------- UI: list with Prism checkbox ---------- */
+  /* ---------- UI: list with Top/Mid/Bottom rows ---------- */
   update_shape_list() {
     const list = document.getElementById('shapeList');
     const empty = document.getElementById('emptyState');
@@ -630,17 +648,42 @@ class App {
       const item = document.createElement('div');
       item.className = 'shapeItem';
 
+      // Top row: index badge
+      const topRow = document.createElement('div');
+      topRow.className = 'shapeTop';
+      const idxBadge = document.createElement('span');
+      idxBadge.className = 'badge indexBadge';
+      idxBadge.textContent = `#${i}`;
+      topRow.appendChild(idxBadge);
+
+      // Middle row: canvas (left) + prism/remove (right)
+      const midRow = document.createElement('div');
+      midRow.className = 'shapeMid';
+
       const meta = document.createElement('div');
       meta.className = 'shapeMeta';
-
       const canvas = document.createElement('canvas');
       canvas.width = 200; canvas.height = 110;
       shape.drawToCanvas(canvas);
+      meta.appendChild(canvas);
 
       const controls = document.createElement('div');
-      controls.style.display = 'grid';
-      controls.style.gap = '6px';
-      controls.style.justifyItems = 'end';
+      controls.className = 'midControls';
+
+      const btn = document.createElement('button');
+      btn.textContent = 'Remove';
+      btn.addEventListener('click', () => this.remove_shape(i));
+      controls.appendChild(btn);
+
+      midRow.appendChild(meta);
+      midRow.appendChild(controls);
+
+      // Bottom row: "Should be next to" + input (placeholder index)
+      const bottomRow = document.createElement('div');
+      bottomRow.className = 'shapeBottom';
+
+      const adjRow = document.createElement('div');
+      adjRow.className = 'adjRow';
 
       const prismWrap = document.createElement('label');
       prismWrap.className = 'check';
@@ -650,19 +693,38 @@ class App {
       prismChk.addEventListener('change', () => { shape.prism = prismChk.checked; });
       const prismTxt = document.createElement('span');
       prismTxt.textContent = 'Prism';
-      prismWrap.appendChild(prismChk);
+      prismTxt.className = 'hint';
       prismWrap.appendChild(prismTxt);
+      prismWrap.appendChild(prismChk);
+      adjRow.appendChild(prismWrap);
 
-      const btn = document.createElement('button');
-      btn.textContent = 'Remove';
-      btn.addEventListener('click', () => this.remove_shape(i));
+      const adjLbl = document.createElement('span');
+      adjLbl.className = 'hint';
+      adjLbl.textContent = '        Adjacent to';
+      const adjInp = document.createElement('input');
+      adjInp.type = 'number';
+      adjInp.min = '0';
+      adjInp.step = '1';
+      adjInp.placeholder = 'index';
+      adjInp.value = (Number.isInteger(shape.adjacentTo) ? String(shape.adjacentTo) : '');
+      adjInp.addEventListener('input', () => {
+        const v = adjInp.value.trim();
+        if (v === '') { shape.adjacentTo = null; return; }
+        const idx = Number(v);
+        if (Number.isInteger(idx) && idx >= 0) {
+          shape.adjacentTo = idx;
+        } else {
+          shape.adjacentTo = null;
+        }
+      });
+      adjRow.appendChild(adjLbl);
+      adjRow.appendChild(adjInp);
+      bottomRow.appendChild(adjRow);
 
-      meta.appendChild(canvas);
-      controls.appendChild(prismWrap);
-      controls.appendChild(btn);
-
-      item.appendChild(meta);
-      item.appendChild(controls);
+      // Compose rows
+      item.appendChild(topRow);
+      item.appendChild(midRow);
+      item.appendChild(bottomRow);
       list.appendChild(item);
     });
   }
@@ -727,7 +789,7 @@ class App {
   }
 
   /* ================================
-   *  Multithreaded solver + Prism constraint
+   *  Multithreaded solver + Prism + Directed Adjacency constraints
    * ================================ */
   find_placement() {
     this.board.hideMessage();
@@ -759,6 +821,11 @@ class App {
     const all_shape_placements = [];
     const shape_sizes = [];
     const prism_flags = this.shapes.map(s => !!s.prism);
+
+    // Gather directed adjacency constraints by original index (0-based)
+    // adjacentTo[i] = j means shape i must touch shape j. Invalid/self refs ignored later.
+    const adjacentTo = this.shapes.map((s,i) => Number.isInteger(s.adjacentTo) ? s.adjacentTo : -1);
+    const anyAdj = adjacentTo.some(t => t >= 0);
     const anyPrism = prism_flags.some(Boolean);
 
     for (const shape of this.shapes) {
@@ -802,8 +869,35 @@ class App {
     const sizes_ordered = order.map(i => shape_sizes[i]);
     const prism_ordered = order.map(i => prism_flags[i]);
 
-    // Neighbor masks for prism adjacency pruning
+    // Map original indices <-> depth in search order
+    const originalIndexToDepth = new Map(order.map((orig, d) => [orig, d]));
+
+    // Sanitize and build directed constraints in depth space
+    const targetDepthForDepth = new Array(order.length).fill(-1);
+    const sourcesForDepth = Array.from({length: order.length}, () => []);
+    for (let orig = 0; orig < adjacentTo.length; orig++) {
+      const targOrig = adjacentTo[orig];
+      if (!(targOrig >= 0) || targOrig === orig || targOrig >= adjacentTo.length) continue;
+      const dSrc = originalIndexToDepth.get(orig);
+      const dTgt = originalIndexToDepth.get(targOrig);
+      if (dSrc === undefined || dTgt === undefined) continue;
+      targetDepthForDepth[dSrc] = dTgt;      // src must touch tgt
+      sourcesForDepth[dTgt].push(dSrc);      // tgt must touch these sources
+    }
+
+    // Neighbor masks for adjacency checks (both prism cluster & directed constraints)
     const neighborMasks = this.buildNeighborMasks(W, H);
+    const neighborOf = (mask) => {
+      let res = 0n;
+      let m = mask;
+      while (m) {
+        const lsb = m & (-m);
+        const bit = powIndex.get(lsb.toString());
+        res |= neighborMasks[bit];
+        m ^= lsb;
+      }
+      return res;
+    };
 
     // Seeds for parallel enumeration
     const seeds = placements_ordered[0];
@@ -819,8 +913,8 @@ class App {
       this.applySolutionByIndex(0);
     };
 
-    // ---------- If any prism is selected, use single-threaded DFS with adjacency constraint ----------
-    if (anyPrism) {
+    // If any Prism or any directed adjacency exists, do single-threaded DFS with constraints
+    if (anyPrism || anyAdj) {
       const n = placements_ordered.length;
       const remain = new Array(n + 1).fill(0);
       for (let i = n - 1; i >= 0; i--) remain[i] = remain[i + 1] + sizes_ordered[i];
@@ -829,23 +923,11 @@ class App {
 
       const solutions = [];
 
-      const neighborOf = (mask) => {
-        let res = 0n;
-        let m = mask;
-        while (m) {
-          const lsb = m & (-m);
-          const bit = powIndex.get(lsb.toString());
-          res |= neighborMasks[bit];
-          m ^= lsb;
-        }
-        return res;
-      };
-
       const dfs = (depth, occ, chosen, prismUnion, prismPlacedCount) => {
         if (solutions.length >= MAX_SOLUTIONS) return false;
 
         const free = BOARD_CELLS - bitCount(occ);
-        if (remain[depth] > free) return true; // prune but keep exploring siblings
+        if (remain[depth] > free) return true; // prune
 
         if (depth === n) {
           solutions.push(chosen.slice());
@@ -855,16 +937,38 @@ class App {
         const plist = placements_ordered[depth];
         const isPrism = prism_ordered[depth];
 
-        const needAdjacency = isPrism && prismPlacedCount > 0;
-        const border = needAdjacency ? neighborOf(prismUnion) : 0n;
+        // Directed adjacency: shapes whose constraint points TO this depth and are already placed
+        const mustTouchMasksFromSources = sourcesForDepth[depth]
+          .filter(s => s < depth && chosen[s] !== 0n)
+          .map(s => chosen[s]);
 
-        for (let i=0;i<plist.length;i++) {
+        // Prism cluster adjacency (if cluster already started)
+        const needPrismAdjacency = isPrism && prismPlacedCount > 0;
+        const prismBorder = needPrismAdjacency ? neighborOf(prismUnion) : 0n;
+
+        for (let i = 0; i < plist.length; i++) {
           const mask = plist[i];
           if ((mask & occ) !== 0n) continue;
 
-          if (needAdjacency && (mask & border) === 0n) continue; // must touch existing prism cluster
+          // Prism adjacency requirement
+          if (needPrismAdjacency && (mask & prismBorder) === 0n) continue;
+
+          // Directed: sources that target current must touch this mask
+          let ok = true;
+          for (const srcMask of mustTouchMasksFromSources) {
+            if ((mask & neighborOf(srcMask)) === 0n) { ok = false; break; }
+          }
+          if (!ok) continue;
+
+          // Directed: if current targets an earlier depth, it must touch that target
+          const tDepth = targetDepthForDepth[depth];
+          if (tDepth >= 0 && tDepth < depth) {
+            const tgtMask = chosen[tDepth];
+            if (!tgtMask || (tgtMask & neighborOf(mask)) === 0n) continue;
+          }
 
           chosen[depth] = mask;
+
           const nextUnion = isPrism ? (prismUnion | mask) : prismUnion;
           const nextCount = isPrism ? (prismPlacedCount + 1) : prismPlacedCount;
 
@@ -879,13 +983,13 @@ class App {
         const firstIsPrism = prism_ordered[0];
         const firstUnion = firstIsPrism ? seeds[s] : 0n;
         const firstCount = firstIsPrism ? 1 : 0;
-        dfs(1, seeds[s], chosen, firstUnion, firstCount);
+        if (!dfs(1, seeds[s], chosen, firstUnion, firstCount)) break;
       }
       finishWhenReady(solutions);
       return;
     }
 
-    // ---------- No prism: keep multithreaded enumeration ----------
+    // ---------- No constraints: multithreaded enumeration ----------
     const haveWorkers = typeof Worker !== 'undefined';
     const THREADS = Math.min(
       seeds.length,
@@ -926,7 +1030,7 @@ class App {
       return;
     }
 
-    // Worker pool enumeration (no prism constraints)
+    // Worker pool enumeration (no constraints)
     const workerURL = createSolverWorkerURL();
     const workers = [];
     const chunks = chunk(seeds, THREADS);
@@ -937,7 +1041,7 @@ class App {
     const payloadBase = {
       placements_ordered,
       sizes_ordered,
-      board_cells: BOARD_CELLS
+      board_cells: W*H
     };
 
     const cleanup = () => {
