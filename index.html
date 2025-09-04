@@ -502,9 +502,14 @@ class App {
 
     this.canvas.addEventListener('click', (ev) => {
       const rect = this.canvas.getBoundingClientRect();
-      const x = (ev.clientX - rect.left);
-      const y = (ev.clientY - rect.top);
-      if (this.board.toggle_cell(x,y)) this.redraw();
+      // Scale from CSS pixels (rect) to canvas pixels (width/height)
+      const scaleX = this.canvas.width  / rect.width;
+      const scaleY = this.canvas.height / rect.height;
+
+      const x = (ev.clientX - rect.left) * scaleX;
+      const y = (ev.clientY - rect.top)  * scaleY;
+
+      if (this.board.toggle_cell(x, y)) this.redraw();
     });
 
     window.addEventListener('keydown', (ev) => this.on_key(ev), { passive: false });
