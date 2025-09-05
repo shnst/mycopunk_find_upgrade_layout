@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
 <!-- Google tag (gtag.js) -->
@@ -101,6 +101,12 @@
     <button id="btnAdd">➕ Add shape</button>
     <button id="btnSolve">🔎 Find placement</button>
     <button id="btnClear">🧹 Clear</button>
+
+    <!-- NEW: rotation toggle (off by default) -->
+    <label class="check" title="Include rotated variants of shapes during search">
+      <span class="hint">Disable Rotation</span>
+      <input type="checkbox" id="disableRotation">
+    </label>
 
     <div class="sizeControls">
       <span class="hint">Board</span>
@@ -661,7 +667,7 @@ class App {
       idxBadge.textContent = `#${i}`;
       topRow.appendChild(idxBadge);
 
-      // Middle row: canvas (left) + prism/remove (right)
+      // Middle row: canvas (left) + controls (right)
       const midRow = document.createElement('div');
       midRow.className = 'shapeMid';
 
@@ -683,7 +689,7 @@ class App {
       midRow.appendChild(meta);
       midRow.appendChild(controls);
 
-      // Bottom row: "Should be next to" + input (placeholder index)
+      // Bottom row: Prism + "Adjacent to" index
       const bottomRow = document.createElement('div');
       bottomRow.className = 'shapeBottom';
 
@@ -811,6 +817,8 @@ class App {
     const requestedMax = Math.max(1, Math.min(200, Number(document.getElementById('maxSol').value) || 5));
     const MAX_SOLUTIONS = Math.min(requestedMax, 100);
 
+    const disableRotation = document.getElementById('disableRotation')?.checked ?? false;
+
     const idx_of = (x,y) => y*W + x;
 
     // Decode helpers
@@ -828,16 +836,17 @@ class App {
     const prism_flags = this.shapes.map(s => !!s.prism);
 
     // Gather directed adjacency constraints by original index (0-based)
-    // adjacentTo[i] = j means shape i must touch shape j. Invalid/self refs ignored later.
     const adjacentTo = this.shapes.map((s,i) => Number.isInteger(s.adjacentTo) ? s.adjacentTo : -1);
     const anyAdj = adjacentTo.some(t => t >= 0);
     const anyPrism = prism_flags.some(Boolean);
 
     for (const shape of this.shapes) {
-      const rots = shape.rotations();
+      // Decide orientations based on toggle
+      const orientations = disableRotation ? [shape.cells] : shape.rotations();
+
       const seenOffsets = new Set();
       const rotationOffsets = [];
-      for (const rot of rots) {
+      for (const rot of orientations) {
         const offs = offsetsFromPivotAxial(rot);
         const key = offsetsKey(offs);
         if (!seenOffsets.has(key)) { seenOffsets.add(key); rotationOffsets.push(offs); }
