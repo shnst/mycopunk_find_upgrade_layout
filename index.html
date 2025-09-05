@@ -29,7 +29,22 @@
   }
   button:hover { border-color: #aaa; }
   main { display: grid; grid-template-columns: 1fr var(--panel-w); min-height: 0; }
-  #boardWrap { position: relative; display: grid; place-items: center; min-width: 0; overflow: hidden; }
+  /* Make the canvas column independently scrollable */
+  #boardWrap {
+    position: relative;
+    display: grid;
+    /* top-center so you see the top of the board first */
+    place-items: start center;
+    min-width: 0;
+    /* this is the key for grid children to allow scrolling */
+    min-height: 0;
+    /* enable vertical (and horizontal if needed) scrolling */
+    overflow: auto;
+    /* nice feel on touchpads/phones */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 12px; /* optional breathing room around the canvas */
+  }
   #board { background: #fff; border: 1px solid #ddd; border-radius: 12px; max-width: 100%; height: auto; }
   #overlayMessage {
     position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
