@@ -318,8 +318,8 @@ class HexBoard {
     this.radius = 40;
     this.dx = 1.5 * this.radius;
     this.dy = Math.sqrt(3) * this.radius;
-    this.marginX = 100;
-    this.marginY = 100;
+    this.marginX = 150;
+    this.marginY = 150;
 
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -340,8 +340,8 @@ class HexBoard {
   }
 
   updateCanvasSize() {
-    const spanX = this.dx * (this.width - 1) + 2 * this.radius;
-    const spanY = this.dy * (this.height - 1) + (this.dy / 2) + 2 * this.radius;
+    const spanX = this.dx * (this.width - 1);
+    const spanY = this.dy * (this.height - 1);
     const pxW = Math.ceil(this.marginX * 2 + spanX);
     const pxH = Math.ceil(this.marginY * 2 + spanY);
     this.canvas.width = pxW;
